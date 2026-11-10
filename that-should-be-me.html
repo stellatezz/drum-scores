@@ -727,13 +727,20 @@ function loadKit() {
     credit.innerHTML = `Drum sounds: ${kit.credit.replace(/CC BY 4\.0/, `<a href="${kit.license}" target="_blank" rel="noopener">CC BY 4.0</a>`)} `
       + `<a href="${kit.source}" target="_blank" rel="noopener">Source</a>.`;
     credit.hidden = false;
-    // the instruments this page plays come first, so playback can start before the rest has loaded
-    const inScore = new Set();
-    VERSIONS.forEach(v => v.score.bars.forEach(b => b.hits.forEach(h => inScore.add(h.inst))));
+    // Load order: the velocity layers this page's hits fall in, one take of each before the alternates; then the
+    // other layers of its instruments; then the rest of the kit. Playback can start after the first group.
+    const need = {};
+    VERSIONS.forEach(v => v.score.bars.forEach(b => b.hits.forEach(h => {
+      const alias = (kit.aliases || {})[h.inst];
+      (need[alias || h.inst] ||= new Set()).add(alias ? 127 : h.vel);
+    })));
     const jobs = [];
-    Object.entries(kit.instruments).forEach(([inst, spec]) => spec.layers.forEach((layer, li) => layer.samples.forEach((s, k) =>
-      jobs.push({ inst, li, k, file: s.file, first: inScore.has(inst) }))));
-    jobs.sort((a, b) => b.first - a.first);
+    Object.entries(kit.instruments).forEach(([inst, spec]) => spec.layers.forEach((layer, li) => layer.samples.forEach((s, k) => {
+      const hit = need[inst] && [...need[inst]].some(v => v >= layer.lovel && v <= layer.hivel);
+      jobs.push({ inst, li, k, file: s.file, prio: hit ? 2 : need[inst] ? 1 : 0 });
+    })));
+    jobs.sort((a, b) => b.prio - a.prio || a.k - b.k);
+    jobs.forEach(j => { j.first = j.prio === 2; });
     kitTotal = jobs.length; kitDone = 0; paintKitState();
     let firstLeft = jobs.filter(j => j.first).length;
     if (!firstLeft) markFirst();
@@ -774,7 +781,12 @@ function kitVoice(inst, t, v) {
   if (!spec || !layers) return false;
   const vel = Math.max(1, Math.min(127, Math.round(v * 127)));
   let li = spec.layers.findIndex(l => vel >= l.lovel && vel <= l.hivel);
-  if (li < 0 || !layers[li]) li = layers.findIndex(Boolean);
+  if (li < 0) li = spec.layers.length - 1;
+  if (!(layers[li] || []).some(Boolean)) {  // still loading: the nearest layer that has arrived
+    let best = -1;
+    layers.forEach((l, i) => { if ((l || []).some(Boolean) && (best < 0 || Math.abs(i - li) < Math.abs(best - li))) best = i; });
+    li = best;
+  }
   const takes = (layers[li] || []).filter(Boolean);
   if (!takes.length) return false;
   // round robin: a different take every hit, never the same one twice in a row
