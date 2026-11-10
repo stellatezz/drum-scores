@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Drum kit sound check</title>
+<style>
+  :root { --paper: #f5f6f8; --surface: #fff; --ink: #15171c; --muted: #5b6270; --rule: #d9dce2; --accent: #2b47d6; --accent-soft: rgba(43, 71, 214, 0.09); }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #0f1115; --surface: #171a20; --ink: #e7e9ee; --muted: #9aa1ae; --rule: #2a2e37; --accent: #8197ff; --accent-soft: rgba(129, 151, 255, 0.13); color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px max(16px, env(safe-area-inset-left)) 64px; }
+  h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.1; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 28px 0 10px; }
+  p { margin: 0 0 10px; color: var(--muted); max-width: 68ch; }
+  a { color: var(--accent); }
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 0; margin: 14px 0 4px;
+    background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+  .seg { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); }
+  .seg button { border: 0; background: none; padding: 6px 14px; border-radius: 8px; cursor: pointer; color: var(--muted); font: inherit; font-weight: 500; }
+  .seg button[aria-checked="true"] { background: var(--accent); color: var(--surface); }
+  label.ctl { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; color: var(--muted); }
+  input[type=range] { accent-color: var(--accent); width: 120px; }
+  output { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; min-width: 3ch; color: var(--ink); }
+  .state { font-size: 13px; color: var(--muted); }
+  .pads { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+  .pad { appearance: none; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); border-radius: 12px; padding: 18px 12px; font: inherit; font-weight: 600;
+    cursor: pointer; text-align: left; touch-action: manipulation; transition: transform 60ms ease, background 120ms ease; min-height: 72px; }
+  .pad small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .pad:active, .pad.hit { transform: scale(0.97); background: var(--accent-soft); border-color: var(--accent); }
+  .grooves { display: flex; flex-wrap: wrap; gap: 10px; }
+  .groove { border: 1px solid var(--rule); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 8px 16px; font: inherit; font-weight: 500; cursor: pointer; }
+  .groove[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  .credit { margin-top: 36px; font-size: 13px; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p><a href="./">← Drum scores</a></p>
+  <h1>Drum kit sound check</h1>
+  <p>The kit the score pages play: a studio-recorded acoustic kit (Yamaha Recording Custom shells, Sabian and Zildjian
+    cymbals), every mic mixed to stereo, with up to 5 loudness layers and several alternate takes per drum so repeated
+    hits don't sound mechanical. Tap a pad, or play a groove. Switch to Synth to compare with the old sound.</p>
+
+  <div class="bar">
+    <div class="seg" role="radiogroup" aria-label="Sound">
+      <button type="button" role="radio" aria-checked="true" data-kit="real">Real kit</button>
+      <button type="button" role="radio" aria-checked="false" data-kit="synth">Synth</button>
+    </div>
+    <label class="ctl" for="vel">Strength <input type="range" id="vel" min="20" max="127" value="110"><output id="velOut">110</output></label>
+    <label class="ctl" for="bpm">Tempo <input type="range" id="bpm" min="60" max="160" value="96"><output id="bpmOut">96</output></label>
+    <span class="state" id="state" aria-live="polite">Loading kit…</span>
+  </div>
+
+  <h2>Kit pieces</h2>
+  <div class="pads" id="pads"></div>
+
+  <h2>Grooves</h2>
+  <div class="grooves" id="grooves"></div>
+  <p style="margin-top:10px">Strength sets how hard every hit in a groove is played; accents and ghost notes are relative to it.</p>
+
+  <p class="credit" id="credit"></p>
+</div>
+
+<script>
+const KIT_URL = "kits/naked/";
+const PADS = [
+  ["kick", "Kick", "22\" bass drum"], ["snare", "Snare", "centre hit"], ["side_stick", "Cross-stick", "rim click"],
+  ["rimshot", "Rimshot", "snare, full strength"],
+  ["hihat", "Hi-hat", "closed"], ["hihat_open", "Hi-hat open", "closed by the next hi-hat"], ["hihat_pedal", "Hi-hat foot", "pedal"],
+  ["tom_hi", "High tom", "10\""], ["tom_mid", "Mid tom", "12\""], ["tom_low", "Low tom", "13\""], ["tom_floor", "Floor tom", "16\""],
+  ["ride", "Ride", "bow"], ["ride_bell", "Ride bell", ""], ["crash", "Crash", ""], ["splash", "Splash", ""], ["china", "China", ""],
+];
+// grooves: 16 steps per bar; each line is an instrument and a pattern (x = hit, X = accent, g = ghost, o = open hat)
+const GROOVES = {
+  "Rock beat": { bars: 2, lines: { hihat: "x-x-X-x-x-x-X-x-", kick: "X-----x-X-x-----", snare: "----X-------X---" } },
+  "Pop 16ths": { bars: 2, lines: { hihat: "XxxxXxxxXxxxXxxx", kick: "X--x--x-X-----x-", snare: "----X--g-g--X---" } },
+  "Open hat": { bars: 2, lines: { hihat: "x-x-x-x-x-x-x-o-", hihat_pedal: "------------x---", kick: "X-------X-x-----", snare: "----X-------X---" } },
+  "Ride + bell": { bars: 2, lines: { ride: "X-x-X-x-X-x-X-x-", ride_bell: "--------------x-", kick: "X-----x-X-------", snare: "----X-------X---", hihat_pedal: "----x-------x---" } },
+  "Tom fill": { bars: 1, lines: { snare: "XxXx------------", tom_hi: "----XxXx--------", tom_mid: "--------XxXx----", tom_floor: "------------XxXx", kick: "X---X---X---X---" }, then: { crash: "X", kick: "X" } },
+  "Ghost notes": { bars: 2, lines: { hihat: "x-x-x-x-x-x-x-x-", kick: "X-----x---X-----", snare: "-g-gX-g--g-gX-gg" } },
+  "Cymbals": { bars: 2, lines: { crash: "X-------------------------------", splash: "--------X-----------------------", china: "----------------X---------------", ride_bell: "------------------------X---X---", kick: "X-------X-------X-------X-------" }, steps: 32 },
+};
+
+let ac, bus, kit = null, bufs = {}, kitOn = true, last = {}, voices = {};
+const velEl = document.getElementById("vel"), bpmEl = document.getElementById("bpm"), stateEl = document.getElementById("state");
+velEl.oninput = () => document.getElementById("velOut").textContent = velEl.value;
+bpmEl.oninput = () => document.getElementById("bpmOut").textContent = bpmEl.value;
+
+function context() {
+  if (ac) return;
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  const lim = ac.createDynamicsCompressor();
+  lim.threshold.value = -4; lim.knee.value = 4; lim.ratio.value = 12; lim.attack.value = 0.002; lim.release.value = 0.15;
+  bus = ac.createGain(); bus.gain.value = 1.3; bus.connect(lim).connect(ac.destination);
+}
+function attackOffset(buf, leadIn) {
+  const ch = buf.getChannelData(0); let peak = 0;
+  for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
+  for (let i = 0; i < ch.length; i++) if (Math.abs(ch[i]) >= peak * 0.0158) return Math.max(0, i / buf.sampleRate - leadIn);
+  return 0;
+}
+// fetch and decode one sample, trying again twice if the network drops it
+async function fetchSample(url) {
+  for (let a = 0; ; a++) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`${r.status} ${url}`);
+      const bytes = await r.arrayBuffer();
+      return await new Promise((ok, bad) => ac.decodeAudioData(bytes, ok, bad));
+    } catch (e) { if (a >= 2) throw e; await new Promise(res => setTimeout(res, 400 * (a + 1))); }
+  }
+}
+async function load() {
+  context();
+  kit = await (await fetch(KIT_URL + "kit.json")).json();
+  document.getElementById("credit").innerHTML = `Drum sounds: ${kit.credit.replace("CC BY 4.0", `<a href="${kit.license}">CC BY 4.0</a>`)} <a href="${kit.source}">Source</a>.`;
+  const jobs = [];
+  Object.entries(kit.instruments).forEach(([inst, s]) => s.layers.forEach((l, li) => l.samples.forEach((f, k) => jobs.push([inst, li, k, f.file]))));
+  let done = 0, next = 0;
+  const work = async () => { while (next < jobs.length) { const [inst, li, k, file] = jobs[next++];
+    try {
+      const buf = await fetchSample(KIT_URL + file);
+      ((bufs[inst] ||= [])[li] ||= [])[k] = { buf, off: attackOffset(buf, kit.attackAt || 0) };
+    } catch (e) { console.warn("kit sample failed", file, e); }
+    stateEl.textContent = `Loading kit… ${Math.round(100 * ++done / jobs.length)}%`; } };
+  await Promise.all(Array.from({ length: 6 }, work));
+  stateEl.textContent = `${jobs.length} samples loaded`;
+}
+function fade(vo, t, s) {
+  if (vo.done || vo.cut) return; vo.cut = true;
+  vo.g.gain.cancelScheduledValues(t); vo.g.gain.setValueAtTime(vo.g.gain.value, t); vo.g.gain.setTargetAtTime(0, t, Math.max(0.005, s / 4));
+  try { vo.src.stop(t + s * 1.5 + 0.05); } catch (e) {}
+}
+function play(inst, t, vel) {
+  if (!kitOn) return synth(inst, t, vel);
+  const alias = (kit.aliases || {})[inst]; if (alias) { inst = alias; vel = 127; }
+  const spec = kit.instruments[inst], layers = bufs[inst]; if (!spec || !layers) return;
+  let li = spec.layers.findIndex(l => vel >= l.lovel && vel <= l.hivel); if (li < 0 || !layers[li]) li = layers.findIndex(Boolean);
+  const takes = (layers[li] || []).filter(Boolean); if (!takes.length) return;
+  let k = Math.floor(Math.random() * takes.length); if (takes.length > 1 && takes[k] === last[inst]) k = (k + 1) % takes.length;
+  const take = last[inst] = takes[k];
+  [...(kit.chokes[inst] || []), ...(kit.selfChoke.includes(inst) ? [inst] : [])].forEach(o => (voices[o] || []).forEach(vo => fade(vo, t, kit.instruments[o].chokeFade)));
+  const live = (voices[inst] ||= []).filter(v => !v.done); if (live.length >= kit.cymbalVoices) fade(live[0], t, spec.chokeFade);
+  const g = ac.createGain(); g.gain.value = 1 - kit.velTrack * (1 - (vel / 127) ** 2);
+  const src = ac.createBufferSource(); src.buffer = take.buf; src.connect(g).connect(bus); src.start(t, take.off);
+  const vo = { src, g }; src.onended = () => { vo.done = true; voices[inst] = voices[inst].filter(x => x !== vo); }; voices[inst] = [...live, vo];
+}
+// the score viewer's old synth, for comparison
+let noise;
+function synth(inst, t, vel) {
+  const v = vel / 127;
+  if (!noise) { noise = ac.createBuffer(1, ac.sampleRate, ac.sampleRate); const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  const env = (g, peak, decay) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + decay); };
+  const nz = (type, f0, q, peak, decay) => { const s = ac.createBufferSource(); s.buffer = noise; const f = ac.createBiquadFilter(); f.type = type; f.frequency.value = f0; f.Q.value = q; const g = ac.createGain(); env(g, peak, decay); s.connect(f).connect(g).connect(ac.destination); s.start(t); s.stop(t + decay + 0.05); };
+  const tone = (f0, f1, peak, decay, wave = "sine") => { const o = ac.createOscillator(); o.type = wave; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + decay * 0.8); const g = ac.createGain(); env(g, peak, decay); o.connect(g).connect(ac.destination); o.start(t); o.stop(t + decay + 0.05); };
+  switch (inst) {
+    case "kick": tone(140, 42, 0.9 * v, 0.35); break;
+    case "snare": case "rimshot": nz("highpass", 1200, 0.7, 0.55 * v, 0.18); tone(220, 160, 0.25 * v, 0.1, "triangle"); break;
+    case "hihat": nz("highpass", 7500, 0.8, 0.22 * v, 0.05); break;
+    case "hihat_open": nz("highpass", 6500, 0.7, 0.2 * v, 0.35); break;
+    case "ride": nz("bandpass", 6000, 1.5, 0.18 * v, 0.7); tone(620, 600, 0.04 * v, 0.6, "square"); break;
+    case "crash": nz("highpass", 4000, 0.5, 0.35 * v, 1.4); break;
+    case "tom_hi": tone(230, 160, 0.6 * v, 0.3); break;
+    case "tom_mid": tone(170, 120, 0.6 * v, 0.35); break;
+    case "tom_floor": tone(115, 80, 0.7 * v, 0.45); break;
+    case "tom_low": tone(140, 100, 0.65 * v, 0.4); break;
+    case "side_stick": nz("bandpass", 2500, 2, 0.4 * v, 0.04); tone(900, 750, 0.2 * v, 0.03, "triangle"); break;
+    case "hihat_pedal": nz("highpass", 6500, 0.8, 0.14 * v, 0.035); break;
+    case "ride_bell": tone(1250, 1240, 0.09 * v, 0.9, "square"); nz("bandpass", 5000, 2, 0.08 * v, 0.4); break;
+    case "splash": nz("highpass", 5500, 0.6, 0.3 * v, 0.6); break;
+    case "china": nz("bandpass", 3200, 0.8, 0.35 * v, 1.0); break;
+  }
+}
+
+// pads
+const padsEl = document.getElementById("pads");
+PADS.forEach(([inst, name, sub]) => {
+  const b = document.createElement("button"); b.type = "button"; b.className = "pad";
+  b.innerHTML = `${name}<small>${sub || "&nbsp;"}</small>`;
+  b.addEventListener("pointerdown", e => { e.preventDefault(); context(); ac.resume(); play(inst, ac.currentTime + 0.005, +velEl.value);
+    b.classList.add("hit"); setTimeout(() => b.classList.remove("hit"), 120); });
+  b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); context(); ac.resume(); play(inst, ac.currentTime + 0.005, +velEl.value); } });
+  padsEl.appendChild(b);
+});
+
+// grooves: a small look-ahead scheduler, like the score viewer's
+let timer = null, current = null;
+const groovesEl = document.getElementById("grooves");
+function stopGroove() { clearInterval(timer); timer = null; current = null; groovesEl.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", "false"));
+  if (ac) Object.values(voices).forEach(l => l.forEach(vo => fade(vo, ac.currentTime, 0.15))); }
+Object.entries(GROOVES).forEach(([name, g]) => {
+  const b = document.createElement("button"); b.type = "button"; b.className = "groove"; b.textContent = name; b.setAttribute("aria-pressed", "false");
+  b.addEventListener("click", () => {
+    const was = current === name; stopGroove(); if (was) return;
+    context(); ac.resume(); current = name; b.setAttribute("aria-pressed", "true");
+    const steps = g.steps || 16, total = g.bars * steps + (g.then ? steps : 0);
+    let n = 0, t0 = ac.currentTime + 0.1;
+    const stepDur = () => 60 / +bpmEl.value / 4;
+    let next = t0;
+    timer = setInterval(() => {
+      while (next < ac.currentTime + 0.12) {
+        const k = n % total, bar = Math.floor(k / steps), s = k % steps, base = +velEl.value;
+        const lines = g.then && bar === g.bars ? g.then : g.lines;
+        Object.entries(lines).forEach(([inst, pat]) => {
+          const c = pat[s] || "-";
+          if (c === "-") return;
+          const inst2 = c === "o" ? "hihat_open" : inst;
+          const vel = c === "X" ? Math.min(127, base + 14) : c === "g" ? Math.max(20, Math.round(base * 0.38)) : base;
+          // a little human timing and strength, like a drummer
+          play(inst2, next + (Math.random() - 0.5) * 0.006, Math.max(1, Math.min(127, vel + Math.round((Math.random() - 0.5) * 8))));
+        });
+        n++; next += stepDur();
+      }
+    }, 25);
+  });
+  groovesEl.appendChild(b);
+});
+
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  kitOn = b.dataset.kit === "real";
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-checked", x === b));
+}));
+load().catch(e => { console.warn(e); stateEl.textContent = "The kit couldn't load; Synth only."; kitOn = false; });
+</script>
+</body>
+</html>
