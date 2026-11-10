@@ -109,6 +109,8 @@ main { padding-block: 24px 64px; display: grid; gap: 40px; }
 #score svg [fill]:not([fill="none"]) { fill: var(--ink); }
 #score svg [stroke]:not([stroke="none"]) { stroke: var(--ink); }
 #score svg text { fill: var(--ink); }
+#score svg .vf-count text, #score svg .vf-count [fill]:not([fill="none"]) { fill: var(--muted); stroke: none; }
+#score svg .vf-count .vf-beatno, #score svg .vf-count .vf-beatno [fill]:not([fill="none"]) { fill: var(--ink); }
 /* VexFlow puts a notehead's colour on its <g class="vf-notehead">; these come after the ink rules above to win */
 #score svg .vf-notehead[fill="#8a93a6"], #score svg .vf-notehead[fill="#8a93a6"] * { fill: var(--uncertain); stroke: var(--uncertain); }
 #score svg .vf-notehead[fill="#1f5fe0"], #score svg .vf-notehead[fill="#1f5fe0"] * { fill: var(--accent); stroke: var(--accent); }
@@ -184,6 +186,7 @@ a { color: var(--accent); }
     </label>
     <label class="toggle" for="click"><input type="checkbox" id="click"><span>Metronome</span></label>
     <label class="toggle" for="loop"><input type="checkbox" id="loop" checked><span>Loop</span></label>
+    <label class="toggle" for="count" title="Write the counting under the notes: 1 e &amp; a"><input type="checkbox" id="count" checked><span>Count</span></label>
     <label class="ctl" for="kitSel">Sound
       <select id="kitSel">
         <option value="real">Real kit</option>
@@ -250,6 +253,9 @@ const VERSIONS = DATA.versions || [{ score: DATA }];
 let SCORE, sd, tpb, beats, nSlots, bars, timeSig, used, total, hitsAt, st, baseNotes = null;
 // written note types (MusicXML names, from drum2score.voice_tokens) -> VexFlow durations
 const VFDUR = { whole: "w", half: "h", quarter: "q", eighth: "8", "16th": "16", "32nd": "32", "64th": "64" };
+// A dotted note's length must be in its duration ("8d"): a dot that is only attached is drawn but not counted,
+// and every later note of that voice is then placed too early against the other voice.
+const vfDur = t => VFDUR[t.type] + "d".repeat(t.dots || 0);
 
 // keys, names and noteheads mirror kit.py (checked by tests/test_kit.py)
 const INST = {
@@ -327,9 +333,9 @@ function makeNotes(tokens, up, barIndex) {
       n = new VF.StaveNote({ keys: [up ? "d/5" : "e/4"], duration: "wr", align_center: true });
       n._measureRest = true;
     } else if (t.rest) {
-      n = new VF.StaveNote({ keys: [restKey], duration: VFDUR[t.type] + "r", stem_direction: up ? 1 : -1 });
+      n = new VF.StaveNote({ keys: [restKey], duration: vfDur(t) + "r", stem_direction: up ? 1 : -1 });
     } else {
-      n = new VF.StaveNote({ keys: t.inst.map(i => INST[i].key), duration: VFDUR[t.type], stem_direction: up ? 1 : -1 });
+      n = new VF.StaveNote({ keys: t.inst.map(i => INST[i].key), duration: vfDur(t), stem_direction: up ? 1 : -1 });
       t.inst.forEach((inst, idx) => {
         if (INST[inst].open) n.addModifier(openMark(), idx);
         if (isNew(barIndex, t.beat * tpb + t.start, inst)) n.setKeyStyle(idx, { fillStyle: NEW, strokeStyle: NEW });
@@ -355,13 +361,47 @@ function makeNotes(tokens, up, barIndex) {
   return notes;
 }
 
+// The counting under a bar: the beat number on every beat, and "e", "&", "a" (16ths) or "&", "a" (triplets, and the
+// eighths of 6/8 and 12/8) under the notes that are played there. Finer positions are left unnamed.
+const countEl = document.getElementById("count");
+try { countEl.checked = localStorage.getItem("drumcount") !== "off"; } catch (e) {}
+countEl.addEventListener("change", () => {
+  try { localStorage.setItem("drumcount", countEl.checked ? "on" : "off"); } catch (e) {}
+  if (!document.getElementById("sheet").hidden) render();
+});
+function countLabel(slot) {
+  const r = slot % tpb;
+  if (r === 0) return String(Math.floor(slot / tpb) + 1);
+  if (sd === 4 && r * 4 % tpb === 0) return ["e", "&", "a"][r * 4 / tpb - 1];
+  if (r * 3 % tpb === 0) return ["&", "a"][r * 3 / tpb - 1];
+  return null;
+}
+function drawCount(ctx, notes, slotX, y) {
+  const played = new Set();
+  notes.forEach(n => { if (!n._measureRest && !n.isRest()) played.add(n._slot); });
+  ctx.openGroup("count");
+  ctx.save();
+  for (let s = 0; s < nSlots; s++) {
+    const lab = countLabel(s);
+    if (lab === null || slotX[s] === null || (s % tpb !== 0 && !played.has(s))) continue;
+    const beat = s % tpb === 0;
+    ctx.setFont("Public Sans, sans-serif", beat ? 11 : 10, beat ? "bold" : "normal");
+    if (beat) ctx.openGroup("beatno");
+    ctx.fillText(lab, slotX[s] + 1 - ctx.measureText(lab).width / 2, y);
+    if (beat) ctx.closeGroup();
+  }
+  ctx.restore();
+  ctx.closeGroup();
+}
+
 function render() {
   scoreEl.innerHTML = "";
   barGeom = [];
   const W = scoreEl.clientWidth;
   const minBar = sd === 4 ? 250 : 270;
   const perLine = Math.max(1, Math.min(4, Math.floor((W - 50) / minBar)));
-  const lineH = 118, top = 22;  // headroom above line 1 for open hi-hat marks
+  const showCount = countEl.checked;
+  const lineH = showCount ? 152 : 118, top = 22;  // headroom above line 1 for open hi-hat marks
   const nLines = Math.ceil(bars.length / perLine);
   const renderer = new VF.Renderer(scoreEl, VF.Renderer.Backends.SVG);
   renderer.resize(W, nLines * lineH + top + 10);
@@ -412,6 +452,7 @@ function render() {
         for (let k = last + 1; k < s; k++) slotX[k] = slotX[last] + (slotX[s] - slotX[last]) * (k - last) / (s - last);
         last = s;
       }
+      if (showCount) drawCount(ctx, [...up, ...down], slotX, stave.getYForLine(4) + 45);
       barGeom[bar.index] = { x, y: stave.getYForLine(0) - 22, w, h: stave.getYForLine(4) - stave.getYForLine(0) + 44, slotX };
       x += w;
     });
