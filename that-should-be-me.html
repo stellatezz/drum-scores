@@ -553,11 +553,13 @@ if (YTV) {
 // re-time our clock to the video: from now on, slot n sounds when the video reaches its time
 function ytAnchor() {
   if (!playing || !ytReady) return;
-  const vt = ytPlayer.getCurrentTime() - (YTV.offset || 0);
-  const x = vt - (SCORE.t0 ?? DATA.t0 ?? 0);  // seconds after the first slot
-  if (x < 0 || x > SLOT_T[total] - SLOT_T[0]) return;
-  const pass = Math.floor(nextSlot / total) * total, now = slotAt(x) + pass;
-  startTime = ac.currentTime - (timeOf(now) - timeOf(baseSlot)) / speed();
+  // seconds after the first slot, in the same frame as timeOf()
+  const x = ytPlayer.getCurrentTime() - (YTV.offset || 0) - (SCORE.t0 ?? DATA.t0 ?? 0);
+  const len = SLOT_T[total] - SLOT_T[0];
+  if (x < 0 || x > len) return;
+  const pass = Math.floor(nextSlot / total);
+  startTime = ac.currentTime - (pass * len + x - timeOf(baseSlot)) / speed();
+  const now = pass * total + slotAt(x);
   if (nextSlot < Math.ceil(now)) nextSlot = Math.ceil(now);
   ytWant = null;
 }
